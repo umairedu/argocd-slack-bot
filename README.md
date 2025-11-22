@@ -67,7 +67,7 @@ The easiest way to deploy this bot in a Kubernetes environment is using the incl
 1. **Clone the Repository**
 
 ```bash
-git clone <repository-url>
+git clone git@github.com:umairedu/argocd-slack-bot.git
 cd argocd_deployment_bot
 ```
 
