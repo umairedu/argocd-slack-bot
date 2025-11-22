@@ -1,0 +1,15 @@
+apiVersion: v2
+name: deployment-bot
+description: A Helm chart for deployment-bot
+type: application
+version: 0.1.9
+
+maintainers:
+  - name: Umairedu
+    email: umairedu@gmail.com
+keywords:
+  - argocd
+  - deployment
+  - slack
+  - kubernetes
+  - python

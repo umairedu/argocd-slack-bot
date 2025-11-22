@@ -1,0 +1,108 @@
+nameOverride: "deployment-bot"
+environment: production
+tag_version: "latest"
+
+namespace: argocd
+image:
+  repository: umairedu/argocd-deployment-bot
+  pullPolicy: Always
+
+imagePullSecrets: []
+replicaCount: 1
+
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 5000
+  name: deployment-bot
+
+ingress:
+  enabled: true
+  className: "nginx-k8s"
+  annotations:
+    nginx.ingress.kubernetes.io/affinity: cookie
+    nginx.ingress.kubernetes.io/configuration-snippet: more_clear_headers "Server";
+    nginx.ingress.kubernetes.io/enable-cors: 'true'
+    nginx.ingress.kubernetes.io/force-ssl-redirect: 'true'
+    nginx.ingress.kubernetes.io/proxy-body-size: 700m
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: '180'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '180'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '180'
+    nginx.ingress.kubernetes.io/session-cookie-expires: '172800'
+    nginx.ingress.kubernetes.io/session-cookie-max-age: '172800'
+    nginx.ingress.kubernetes.io/session-cookie-name: route
+    nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+    nginx.ingress.kubernetes.io/use-regex: 'true'
+    nginx.org/client-max-body-size: 600m
+  hosts:
+    - host: deployment-bot.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: deployment-bot-cert
+      hosts:
+        - deployment-bot.example.com
+
+resources:
+  limits:
+    cpu: 300m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 100%
+    maxUnavailable: 0
+
+
+
+deployment_bot:
+  command: []
+    #["/bin/sh", "-c", "--"]
+  baseArgs: []
+    #["while true; do sleep 300; done;"]
+  # command: ["gunicorn"]
+  # baseArgs: ["--bind", "0.0.0.0:5000", "--workers", "1", "--timeout", "120", "--reload", "--access-logfile", "-", "--error-logfile", "-", "--log-level", "info", "main:app"]
+
+
+  health:
+    healthpath: "/health"
+    initialDelay: "5"
+    readiness_initialdelay: "5"
+
+  plain:
+    FLASK_DEBUG: 1
+    FLASK_APP: main.py
+    FLASK_PORT: 5000
+    FLASK_HOST: 0.0.0.0
+    FLASK_DEBUG: False
+    ARGOCD_VERIFY_SSL: False
+    ARGOCD_LOG_TAIL_LINES: 50
+    ARGOCD_URL: https://argocd-server
+    BOT_NAME: ArgoCD Deployment Bot
+    BOT_DESCRIPTION: ArgoCD Deployment Bot, designed to assist you with production deployment, rollback procedures, and status checks for current deployments and tags.
+    #ALLOWED_USERS: U0987654321,U1122334455
+  secrets:
+    SLACK_TOKEN: xoxb-XXXXX
+    SIGNING_SECRET: XXXXXXX
+    VERIFICATION_TOKEN: XXXXXX
+    ARGOCD_TOKEN: XXXXXX
+    
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

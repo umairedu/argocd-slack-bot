@@ -1,0 +1,8 @@
+Flask==2.3.3
+python-dotenv==1.0.0
+requests==2.31.0
+slack-sdk==3.23.0
+slackeventsapi==3.0.1
+prettytable==3.9.0
+pyee==8.2.2
+gunicorn==21.2.0
