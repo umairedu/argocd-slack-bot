@@ -68,7 +68,7 @@ The easiest way to deploy this bot in a Kubernetes environment is using the incl
 
 ```bash
 git clone git@github.com:umairedu/argocd-slack-bot.git
-cd argocd_deployment_bot
+cd argocd-slack-bot
 ```
 
 2. **Configure Values**
@@ -388,7 +388,7 @@ The bot implements user authorization to ensure only authorized users can perfor
 ## Project Structure
 
 ```
-argocd_deployment_bot/
+argocd-slack-bot/
 ├── helm/                      # Helm chart for Kubernetes deployment
 │   └── deployment-bot/
 │       ├── Chart.yaml
