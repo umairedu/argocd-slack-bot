@@ -208,18 +208,25 @@ def rollback_application(app_name: str, revision_id: str) -> str:
     
     Args:
         app_name: Name of the ArgoCD application
-        revision_id: Revision ID to rollback to
+        revision_id: Revision ID to rollback to (string, will be converted to int)
         
     Returns:
         'ok' if rollback successful, 'error' otherwise
     """
+    # Convert revision_id to integer (ArgoCD API requires int64)
+    try:
+        revision_id_int = int(revision_id)
+    except (ValueError, TypeError):
+        print(f"Invalid revision ID: {revision_id}. Must be a numeric value.")
+        return "error"
+    
     # Rollback endpoint
     endpoint = f"{Config.ARGOCD_URL}/api/v1/applications/{app_name}/rollback"
     
-    # Correct payload structure
+    # Correct payload structure - id must be an integer
     payload = {
         "name": app_name,
-        "id": revision_id,
+        "id": revision_id_int,
         "dryRun": False
     }
 
@@ -366,7 +373,7 @@ def get_sync_windows(app_name: str) -> Optional[Dict[str, Any]]:
 
 
 def get_appdetails_for_revision(
-    app: Dict[str, Any], revision_id: int, revision_hash: str
+    app: Dict[str, Any], revision_id: int, revision_hash: str, history_item: Optional[Dict[str, Any]] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Get appdetails (Helm parameters) for a specific revision.
@@ -375,14 +382,21 @@ def get_appdetails_for_revision(
         app: Application dictionary from ArgoCD
         revision_id: Revision ID (versionId)
         revision_hash: Revision hash (git commit hash)
+        history_item: Optional history item to use source from (if provided, uses this instead of current app source)
         
     Returns:
         Appdetails dictionary with Helm parameters or None if request fails
     """
     try:
-        # Extract source information from application
+        # Get app spec for project (usually doesn't change)
         spec = app.get("spec", {})
-        source = spec.get("source", {})
+        
+        # Use source from history_item if provided, otherwise use current app source
+        if history_item and history_item.get("source"):
+            source = history_item.get("source", {})
+        else:
+            source = spec.get("source", {})
+        
         repo_url = source.get("repoURL", "")
         path = source.get("path", "")
         helm_config = source.get("helm", {})
@@ -402,11 +416,16 @@ def get_appdetails_for_revision(
         app_name = app.get("metadata", {}).get("name", "")
         app_project = spec.get("project", "default")
         
+        # Use revision_hash as targetRevision (git commit hash)
+        # The revision_hash from history_item.revision is the git commit hash
+        # This is what we need for targetRevision in the appdetails API
+        target_revision = revision_hash
+        
         payload = {
             "source": {
                 "repoURL": repo_url,
                 "path": path,
-                "targetRevision": revision_hash,
+                "targetRevision": target_revision,
                 "helm": {
                     "valueFiles": value_files
                 },

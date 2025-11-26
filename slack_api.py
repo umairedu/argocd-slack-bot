@@ -162,8 +162,9 @@ def _available_rollback_table(
         if additional_fields and revision_id != "Unknown" and revision_hash:
             try:
                 # Get appdetails for this revision
+                # Use the source from history_item, not the current app source
                 appdetails = argocd.get_appdetails_for_revision(
-                    app, revision_id, revision_hash
+                    app, int(revision_id), revision_hash, history_item
                 )
                 
                 # Extract Helm parameters

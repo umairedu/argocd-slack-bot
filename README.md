@@ -231,8 +231,7 @@ data:
     # Assign roles to API account
     g, api_bot, role:readwrite
     g, api_bot, role:readexecute
-    
-  policy.default: role:readonly
+  policy.default: role:deny
 ```
 
 **Note**: Adjust the permissions based on your security requirements. The above configuration allows the bot to:
