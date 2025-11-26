@@ -22,6 +22,7 @@ The bot acts as a bridge between your development team and production infrastruc
 - **Sync Applications**: Synchronize applications with the latest release
 - **View Logs**: Download and view application logs directly in Slack
 - **Rollback Management**: List available revisions and rollback to previous versions
+- **Configurable Rollback Table**: Customize rollback table columns with Helm parameter fields (e.g., tag_version, replicaCount)
 - **Interactive Commands**: User-friendly confirmation dialogs for all operations
 - **Easy Deployment**: Helm chart included for Kubernetes deployment
 - **Production Ready**: Tested and ready for production use
@@ -87,6 +88,8 @@ deployment_bot:
     ARGOCD_LOG_TAIL_LINES: "50"
     BOT_NAME: ArgoCD Deployment Bot
     BOT_DESCRIPTION: Your bot description
+    ROLLBACK_TABLE_FIELDS: tag_version,replicaCount  # Optional: comma-separated Helm parameter fields
+    AUTO_DISABLE_SYNC_ON_ROLLBACK: "True"  # Optional: automatically disable auto-sync on rollback
   
   secrets:
     SLACK_TOKEN: xoxb-your-slack-token
@@ -216,12 +219,14 @@ data:
     p, role:readwrite, applications, sync, */*, allow
     p, role:readwrite, applications, rollback, */*, allow
     p, role:readwrite, applications, logs, */*, allow
+    p, role:readwrite, applications, update, */*, allow
     
     # Allow read and execute access
     p, role:readexecute, applications, get, */*, allow
     p, role:readexecute, applications, sync, */*, allow
     p, role:readexecute, applications, rollback, */*, allow
     p, role:readexecute, applications, logs, */*, allow
+    p, role:readexecute, applications, update, */*, allow
     
     # Assign roles to API account
     g, api_bot, role:readwrite
@@ -235,6 +240,7 @@ data:
 - Sync applications
 - Rollback applications
 - View application logs
+- Update applications (required for `AUTO_DISABLE_SYNC_ON_ROLLBACK` feature)
 
 Save and exit the editor. ArgoCD will automatically reload the RBAC configuration.
 
@@ -314,8 +320,109 @@ Mention the bot in a channel and use one of these commands:
 - `@bot sync APP_NAME` - Synchronize an application with the latest release
 - `@bot logs APP_NAME` - Download and view application logs
 - `@bot rollback_revisions APP_NAME` - List available revisions for rollback
-- `@bot rollback APP_NAME REVISION_NUMBER` - Rollback to a specific revision
+- `@bot rollback APP_NAME REVISION_NUMBER` - Rollback to a specific revision (automatically handles auto-sync if configured)
 - `@bot help` - Show help message with all available commands
+
+### Rollback Table Configuration
+
+The rollback table can be customized to display additional Helm parameter fields. This is useful for showing deployment-specific information like image tags, replica counts, or other configuration values.
+
+#### Configuration
+
+Set the `ROLLBACK_TABLE_FIELDS` environment variable with comma-separated Helm parameter field names:
+
+```bash
+ROLLBACK_TABLE_FIELDS=tag_version,replicaCount
+```
+
+#### How It Works
+
+1. When you run `@bot rollback_revisions APP_NAME`, the bot:
+   - Fetches all available revisions from ArgoCD history
+   - For each revision, calls the ArgoCD appdetails API to retrieve Helm parameters
+   - Extracts the specified fields from the Helm parameters
+   - Displays them as additional columns in the rollback table
+
+2. **Default Behavior**: If `ROLLBACK_TABLE_FIELDS` is not set, the table shows only:
+   - App Name
+   - Revision Number
+   - Last Deploy Time
+
+3. **With Custom Fields**: When configured, the table includes the base columns plus your custom fields:
+   - App Name
+   - Revision Number
+   - Last Deploy Time
+   - tag_version (or your first field)
+   - replicaCount (or your second field)
+   - ... (additional fields)
+
+#### Example
+
+With `ROLLBACK_TABLE_FIELDS=tag_version,replicaCount`, the rollback table will display:
+
+```
++------------+------------------+---------------------+------------+--------------+
+| App Name   | Revision Number  | Last Deploy Time    | tag_version| replicaCount |
++------------+------------------+---------------------+------------+--------------+
+| my-app     | 3177             | 2025-11-26T07:00:17Z| 8ecf283f   | 1            |
+| my-app     | 3176             | 2025-11-26T06:49:05Z| 7d8e9f10   | 2            |
++------------+------------------+---------------------+------------+--------------+
+```
+
+#### Notes
+
+- Field names must match exactly the Helm parameter names in your values.yaml
+- If a field is not found for a revision, "N/A" will be displayed
+- The API call is made for each revision, so response time may increase with many revisions
+- Only Helm-based applications support this feature
+
+### Auto-Sync Handling for Rollbacks
+
+ArgoCD prevents rollbacks when auto-sync is enabled for an application. The bot can automatically handle this situation.
+
+#### Configuration
+
+Set the `AUTO_DISABLE_SYNC_ON_ROLLBACK` environment variable to enable automatic auto-sync disabling:
+
+```bash
+AUTO_DISABLE_SYNC_ON_ROLLBACK=True
+```
+
+#### How It Works
+
+1. **When Rollback Fails Due to Auto-Sync**:
+   - The bot detects the auto-sync error (code 9)
+   - If `AUTO_DISABLE_SYNC_ON_ROLLBACK=True`, it automatically disables auto-sync for the application
+   - The bot then retries the rollback operation
+   - If successful, the rollback completes
+
+2. **When Auto-Disable is Not Configured**:
+   - The bot returns an error message indicating auto-sync is enabled
+   - You must manually disable auto-sync in ArgoCD before attempting rollback
+
+3. **What Gets Preserved**:
+   - When disabling auto-sync, the bot preserves:
+     - Retry configuration
+     - Sync options
+     - Other sync policy settings
+   - Only the `automated` field is removed
+
+#### Example Flow
+
+```
+User: @bot rollback my-app 12345
+Bot: Auto-sync is enabled for my-app. Attempting to disable it...
+Bot: Successfully disabled auto-sync for application my-app
+Bot: Retrying rollback for my-app after disabling auto-sync...
+Bot: `my-app` rolled back to revision `12345` successfully. ✅
+```
+
+#### Important Notes
+
+- **Auto-sync remains disabled** after the rollback. You may want to re-enable it manually if needed
+- The bot requires appropriate ArgoCD RBAC permissions to modify application sync policies
+- If auto-sync disabling fails, the bot will return an error message with instructions
+- This feature only works if the ArgoCD API account has permissions to update application specs
 
 ### Examples
 
@@ -347,6 +454,8 @@ Mention the bot in a channel and use one of these commands:
 | `FLASK_DEBUG` | No | "False" | Enable Flask debug mode |
 | `ARGOCD_VERIFY_SSL` | No | "False" | Verify SSL certificates |
 | `ARGOCD_LOG_TAIL_LINES` | No | "50" | Number of log lines to fetch |
+| `ROLLBACK_TABLE_FIELDS` | No | - | Comma-separated list of Helm parameter field names to display in rollback table (e.g., `tag_version,replicaCount`) |
+| `AUTO_DISABLE_SYNC_ON_ROLLBACK` | No | "False" | Automatically disable auto-sync when rollback fails due to auto-sync being enabled |
 
 \* **Required for production**: If not set, all users will be allowed (not recommended for production environments).
 

@@ -357,6 +357,23 @@ def handle_interactions() -> Response:
             rollback_status = argocd.rollback_application(app_name, revision_id)
             if rollback_status == "ok":
                 response = {"text": f"`{app_name}` rolled back to revision `{revision_id}` successfully. :white_check_mark:"}
+            elif rollback_status == "autosync_enabled":
+                if Config.AUTO_DISABLE_SYNC_ON_ROLLBACK:
+                    response = {
+                        "text": (
+                            f"`{app_name}` rollback failed: Auto-sync is enabled. "
+                            "Attempted to disable auto-sync automatically but it failed. "
+                            "Please disable auto-sync manually in ArgoCD and try again."
+                        )
+                    }
+                else:
+                    response = {
+                        "text": (
+                            f"`{app_name}` rollback failed: Auto-sync is enabled. "
+                            "Please disable auto-sync in ArgoCD first, or set "
+                            "`AUTO_DISABLE_SYNC_ON_ROLLBACK=True` to enable automatic disabling."
+                        )
+                    }
             else:
                 response = {"text": f"Failed to rollback `{app_name}`. Please check ArgoCD logs."}
             requests.post(response_url, json=response, timeout=10)

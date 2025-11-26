@@ -38,6 +38,14 @@ class Config:
     # ArgoCD API Configuration
     ARGOCD_VERIFY_SSL: bool = os.getenv("ARGOCD_VERIFY_SSL", "False").lower() == "true"
     ARGOCD_LOG_TAIL_LINES: int = int(os.getenv("ARGOCD_LOG_TAIL_LINES", "50"))
+    AUTO_DISABLE_SYNC_ON_ROLLBACK: bool = os.getenv("AUTO_DISABLE_SYNC_ON_ROLLBACK", "False").lower() == "true"
+    
+    # Rollback Table Configuration
+    ROLLBACK_TABLE_FIELDS: List[str] = [
+        field.strip()
+        for field in os.getenv("ROLLBACK_TABLE_FIELDS", "").split(",")
+        if field.strip()
+    ]
     
     # User Authorization
     ALLOWED_USERS: List[str] = [

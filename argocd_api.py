@@ -91,6 +91,117 @@ def sync_application(app_name: str) -> str:
     return "error"
 
 
+def disable_auto_sync(app_name: str) -> bool:
+    """
+    Disable auto-sync for an ArgoCD application.
+    
+    Args:
+        app_name: Name of the ArgoCD application
+        
+    Returns:
+        True if auto-sync was successfully disabled, False otherwise
+    """
+    try:
+        # First, get the current application spec
+        app_data = list_application_by_name(app_name)
+        if not app_data:
+            print(f"Failed to retrieve application {app_name} to disable auto-sync")
+            return False
+        
+        spec = app_data.get("spec", {})
+        sync_policy = spec.get("syncPolicy", {})
+        
+        # If automated is not present or empty, auto-sync is already disabled
+        if not sync_policy.get("automated"):
+            print(f"Auto-sync is already disabled for {app_name}")
+            return True
+        
+        # Build PATCH payload to remove automated sync
+        # ArgoCD API requires us to send the full spec structure
+        # We'll preserve all other fields and only modify syncPolicy
+        patch_payload = {
+            "spec": {
+                "syncPolicy": {}
+            }
+        }
+        
+        # Preserve retry configuration if it exists
+        if "retry" in sync_policy:
+            patch_payload["spec"]["syncPolicy"]["retry"] = sync_policy["retry"]
+        
+        # Preserve syncOptions if they exist
+        if "syncOptions" in sync_policy:
+            patch_payload["spec"]["syncPolicy"]["syncOptions"] = sync_policy["syncOptions"]
+        
+        # If syncPolicy has no other fields, we can omit it or set to null
+        # But for safety, we'll keep an empty object if there are no other fields
+        if not patch_payload["spec"]["syncPolicy"]:
+            # If no other fields, we can set syncPolicy to null to remove automated
+            # But ArgoCD might need the full spec, so let's try with empty object first
+            pass
+        
+        endpoint = f"{Config.ARGOCD_URL}/api/v1/applications/{app_name}"
+        
+        # Use PATCH method with merge strategy
+        # ArgoCD API supports PATCH with application/json content type
+        headers = _get_headers()
+        headers["Content-Type"] = "application/json"
+        
+        # Try PATCH request
+        try:
+            response = requests.patch(
+                url=endpoint,
+                headers=headers,
+                json=patch_payload,
+                verify=Config.ARGOCD_VERIFY_SSL,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                print(f"Successfully disabled auto-sync for application {app_name}")
+                return True
+            else:
+                # If PATCH doesn't work, try PUT with full spec
+                print(f"PATCH failed (status {response.status_code}), trying PUT method...")
+                # Build full spec for PUT
+                full_spec = spec.copy()
+                new_sync_policy = {}
+                if "retry" in sync_policy:
+                    new_sync_policy["retry"] = sync_policy["retry"]
+                if "syncOptions" in sync_policy:
+                    new_sync_policy["syncOptions"] = sync_policy["syncOptions"]
+                
+                if new_sync_policy:
+                    full_spec["syncPolicy"] = new_sync_policy
+                else:
+                    # Remove syncPolicy entirely if no other fields
+                    full_spec.pop("syncPolicy", None)
+                
+                put_payload = {"spec": full_spec}
+                put_response = requests.put(
+                    url=endpoint,
+                    headers=headers,
+                    json=put_payload,
+                    verify=Config.ARGOCD_VERIFY_SSL,
+                    timeout=30
+                )
+                
+                if put_response.status_code == 200:
+                    print(f"Successfully disabled auto-sync for application {app_name} using PUT")
+                    return True
+                else:
+                    print(f"Failed to disable auto-sync for application {app_name}")
+                    print(f"PUT Response status: {put_response.status_code}")
+                    print(f"PUT Response body: {put_response.text}")
+                    return False
+        except RequestException as e:
+            print(f"Request exception while disabling auto-sync for {app_name}: {e}")
+            return False
+    except Exception as e:
+        print(f"Exception while disabling auto-sync for {app_name}: {e}")
+        return False
+
+
 def rollback_application(app_name: str, revision_id: str) -> str:
     """
     Rollback an ArgoCD application to a specific revision.
@@ -102,18 +213,84 @@ def rollback_application(app_name: str, revision_id: str) -> str:
     Returns:
         'ok' if rollback successful, 'error' otherwise
     """
+    # Rollback endpoint
     endpoint = f"{Config.ARGOCD_URL}/api/v1/applications/{app_name}/rollback"
+    
+    # Correct payload structure
     payload = {
         "name": app_name,
         "id": revision_id,
-        "dryRun": False,
+        "dryRun": False
     }
-    
-    response = _make_request("POST", endpoint, json_data=payload)
-    
-    if response and response.status_code == 200:
-        return "ok"
-    return "error"
+
+    # Make rollback request with error handling
+    try:
+        headers = _get_headers()
+        response = requests.post(
+            url=endpoint,
+            headers=headers,
+            json=payload,
+            verify=Config.ARGOCD_VERIFY_SSL,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            return "ok"
+        
+        # Check for auto-sync error
+        try:
+            resp_json = response.json()
+            error_code = resp_json.get("code")
+            error_message = resp_json.get("message", "").lower()
+            
+            if error_code == 9 and "auto-sync" in error_message:
+                # Auto-sync is enabled, check if we should disable it automatically
+                if Config.AUTO_DISABLE_SYNC_ON_ROLLBACK:
+                    print(f"Auto-sync is enabled for {app_name}. Attempting to disable it...")
+                    if disable_auto_sync(app_name):
+                        # Retry rollback after disabling auto-sync
+                        print(f"Retrying rollback for {app_name} after disabling auto-sync...")
+                        retry_response = requests.post(
+                            url=endpoint,
+                            headers=headers,
+                            json=payload,
+                            verify=Config.ARGOCD_VERIFY_SSL,
+                            timeout=30
+                        )
+                        if retry_response.status_code == 200:
+                            print(f"Rollback successful for {app_name} after disabling auto-sync")
+                            return "ok"
+                        else:
+                            print(f"Rollback still failed for {app_name} after disabling auto-sync")
+                            try:
+                                retry_json = retry_response.json()
+                                print(f"Retry error: {retry_json}")
+                            except:
+                                print(f"Retry response: {retry_response.text}")
+                            return "error"
+                    else:
+                        print(f"Failed to disable auto-sync for {app_name}")
+                        return "autosync_enabled"
+                else:
+                    # Auto-disable is not configured, return the error
+                    return "autosync_enabled"
+        except Exception as e:
+            print(f"Error processing rollback response: {e}")
+            pass
+        
+        # Other errors
+        print(f"Rollback failed with status {response.status_code}")
+        try:
+            error_json = response.json()
+            print(f"Error details: {error_json}")
+        except:
+            print(f"Error response: {response.text}")
+        return "error"
+        
+    except RequestException as e:
+        print(f"Request exception during rollback: {e}")
+        return "error"
+
 
 
 def logs_application(app_name: str) -> Optional[str]:
@@ -186,3 +363,66 @@ def get_sync_windows(app_name: str) -> Optional[Dict[str, Any]]:
     if response and response.status_code == 200:
         return response.json()
     return None
+
+
+def get_appdetails_for_revision(
+    app: Dict[str, Any], revision_id: int, revision_hash: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Get appdetails (Helm parameters) for a specific revision.
+    
+    Args:
+        app: Application dictionary from ArgoCD
+        revision_id: Revision ID (versionId)
+        revision_hash: Revision hash (git commit hash)
+        
+    Returns:
+        Appdetails dictionary with Helm parameters or None if request fails
+    """
+    try:
+        # Extract source information from application
+        spec = app.get("spec", {})
+        source = spec.get("source", {})
+        repo_url = source.get("repoURL", "")
+        path = source.get("path", "")
+        helm_config = source.get("helm", {})
+        value_files = helm_config.get("valueFiles", [])
+        
+        if not repo_url:
+            return None
+        
+        # URL encode the repository URL
+        from urllib.parse import quote
+        encoded_repo_url = quote(repo_url, safe="")
+        
+        # Build endpoint
+        endpoint = f"{Config.ARGOCD_URL}/api/v1/repositories/{encoded_repo_url}/appdetails"
+        
+        # Build payload
+        app_name = app.get("metadata", {}).get("name", "")
+        app_project = spec.get("project", "default")
+        
+        payload = {
+            "source": {
+                "repoURL": repo_url,
+                "path": path,
+                "targetRevision": revision_hash,
+                "helm": {
+                    "valueFiles": value_files
+                },
+                "appName": app_name
+            },
+            "appName": app_name,
+            "appProject": app_project,
+            "sourceIndex": 0,
+            "versionId": revision_id
+        }
+        
+        response = _make_request("POST", endpoint, json_data=payload)
+        
+        if response and response.status_code == 200:
+            return response.json()
+        return None
+    except Exception as e:
+        print(f"Failed to get appdetails for revision {revision_id}: {e}")
+        return None

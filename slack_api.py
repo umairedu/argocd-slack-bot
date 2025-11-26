@@ -14,6 +14,7 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from config import Config
+import argocd_api as argocd
 
 
 def _help_reply(channel: str, user: str, client: WebClient, bot_user: str) -> None:
@@ -127,18 +128,68 @@ def _available_rollback_table(
         response_url: Slack response URL for updating the message
         app: Application dictionary from ArgoCD
     """
+    # Build base field names
+    field_names = ["App Name", "Revision Number", "Last Deploy Time"]
+    
+    # Add additional fields from environment variable
+    additional_fields = Config.ROLLBACK_TABLE_FIELDS
+    if additional_fields:
+        field_names.extend(additional_fields)
+    
     table = PrettyTable()
-    table.field_names = ["App Name", "Revision Number", "Last Deploy Time"]
+    table.field_names = field_names
     table.align = "l"
     
     app_name = app.get("metadata", {}).get("name", "Unknown")
     status = app.get("status", {})
     history = status.get("history", [])
     
+    # Loop through each revision in history
     for history_item in history:
         revision_id = history_item.get("id", "Unknown")
         deployed_at = history_item.get("deployedAt", "Unknown")
-        table.add_row([app_name, revision_id, deployed_at])
+        revision_hash = history_item.get("revision", "")
+        
+        # Fallback: try to get revision from source if not directly available
+        if not revision_hash:
+            source = history_item.get("source", {})
+            revision_hash = source.get("targetRevision", "")
+        
+        # Start building row with base fields
+        row = [app_name, revision_id, deployed_at]
+        
+        # Fetch additional fields if configured
+        if additional_fields and revision_id != "Unknown" and revision_hash:
+            try:
+                # Get appdetails for this revision
+                appdetails = argocd.get_appdetails_for_revision(
+                    app, revision_id, revision_hash
+                )
+                
+                # Extract Helm parameters
+                helm_params = {}
+                if appdetails:
+                    helm_data = appdetails.get("helm", {})
+                    parameters = helm_data.get("parameters", [])
+                    for param in parameters:
+                        param_name = param.get("name", "")
+                        param_value = param.get("value", "")
+                        if param_name:
+                            helm_params[param_name] = param_value
+                
+                # Add values for each additional field
+                for field in additional_fields:
+                    value = helm_params.get(field, "N/A")
+                    row.append(str(value) if value else "N/A")
+            except Exception as e:
+                print(f"Failed to fetch additional fields for revision {revision_id}: {e}")
+                # Add N/A for each additional field if fetch fails
+                row.extend(["N/A"] * len(additional_fields))
+        elif additional_fields:
+            # If revision_id is Unknown or revision_hash is missing, add N/A for all fields
+            row.extend(["N/A"] * len(additional_fields))
+        
+        table.add_row(row)
     
     table_string = table.get_string(sortby="Revision Number", reversesort=True)
     
@@ -155,7 +206,7 @@ def _available_rollback_table(
     }
     
     try:
-        requests.post(response_url, json=payload, timeout=10)
+        requests.post(response_url, json=payload, timeout=30)
     except requests.RequestException as e:
         print(f"Failed to send rollback table: {e}")
 
