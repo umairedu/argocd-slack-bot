@@ -95,7 +95,7 @@ deployment_bot:
     BOT_NAME: ArgoCD Deployment Bot
     BOT_DESCRIPTION: ArgoCD Deployment Bot, designed to assist you with production deployment, rollback procedures, and status checks for current deployments and tags.
     #ALLOWED_USERS: U0987654321,U1122334455
-    ROLLBACK_TABLE_FIELDS:tag_version,replicaCount
+    ROLLBACK_TABLE_FIELDS: tag_version,replicaCount
     AUTO_DISABLE_SYNC_ON_ROLLBACK: false
     
   secrets:
